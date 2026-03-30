@@ -119,7 +119,7 @@ jobs:
             -v ${{ github.workspace }}:/code:ro \
             -v ${{ github.workspace }}/scan-output:/output \
             -v ~/.invicti-source-scan-cache:/.cache/enrichment \
-            artifact.invicti.com:443/docker/invicti-platform/invicti-source-scan
+            registry.invicti.com/invicti-platform/invicti-source-scan:latest
 
       - name: Verify source scan outputs
         run: |
