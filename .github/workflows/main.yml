@@ -1,0 +1,271 @@
+# .github/workflows/invicti-security-scan.yml
+#
+# Invicti End-to-End API Security Pipeline
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Pipeline stages (all in one job so they share the runner's filesystem
+# and network namespace):
+#
+#   1. SOURCE SCAN   – invicti-source-scan analyses the WebGoat source code
+#                      and writes openapi.json + results.sarif to scan-output/
+#
+#   2. BUILD         – Maven compiles WebGoat from source into a runnable JAR
+#                      (skip if you'd rather just pull the pre-built Docker image)
+#
+#   3. DEPLOY        – WebGoat is started as a background Docker container,
+#                      bound to 0.0.0.0 so the EphemeralAgent can reach it via
+#                      the Docker bridge gateway (172.17.0.1)
+#
+#   4. DAST SCAN     – invicti/scan-cli runs with EphemeralAgent, which spins
+#                      up a temporary agent inside the runner environment,
+#                      imports the OpenAPI spec discovered in stage 1, and
+#                      performs a full dynamic scan against the live app
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Required GitHub Secrets
+# ─────────────────────────────────────────────────────────────────────────────
+#   INVICTI_API_BASE_URL   e.g. https://platform.invicti.com
+#   INVICTI_API_TOKEN      API token from your Invicti account settings
+#   INVICTI_TARGET_ID      GUID of the target pre-configured in Invicti platform
+#
+# Optional Secrets
+#   ANTHROPIC_API_KEY      Enables AI-enriched endpoint descriptions in source scan
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Networking note
+# ─────────────────────────────────────────────────────────────────────────────
+#   WebGoat runs as a Docker container on the runner.  The EphemeralAgent is
+#   launched by scan-cli *from* the runner process, so it shares the runner's
+#   network — NOT the WebGoat container's network.
+#
+#   We therefore start WebGoat bound to 0.0.0.0:8080 and tell scan-cli to
+#   target http://172.17.0.1:8080 (the standard Docker bridge host gateway).
+#   This is reliably reachable from any process running on the runner host,
+#   including the ephemeral agent.
+#
+#   DO NOT pass localhost or 127.0.0.1 as the target URL — those would resolve
+#   to the scan-cli container's own loopback, not to the WebGoat container.
+
+name: Invicti API Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    name: "Source Scan → Build → Deploy → DAST"
+    runs-on: ubuntu-latest
+
+    # WebGoat target URL, referenced in multiple steps
+    env:
+      WEBGOAT_PORT: "8080"
+      WEBGOAT_TARGET_URL: "http://172.17.0.1:8080"  # Docker bridge host gateway
+      INVICTI_API_BASE_URL: ${{ vars.INVICTI_API_BASE_URL }}
+      INVICTI_API_TOKEN:    ${{ secrets.INVICTI_API_TOKEN }}
+      INVICTI_TARGET_ID:    ${{ vars.INVICTI_TARGET_ID }}
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 0 – CHECKOUT
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Checkout WebGoat source
+        uses: actions/checkout@v4
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 1 – SOURCE SCAN
+      # Runs against the checked-out source code.  Produces:
+      #   scan-output/openapi.json   → fed to DAST scanner in stage 4
+      #   scan-output/results.sarif  → uploaded to GitHub Security tab
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Restore AI enrichment cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.invicti-source-scan-cache
+          key: invicti-source-scan-${{ hashFiles('src/**') }}
+          restore-keys: invicti-source-scan-
+
+      - name: Prepare scan output directory
+        run: mkdir -p ${{ github.workspace }}/scan-output
+
+      - name: "Stage 1 – Source Scan (API discovery)"
+        #run: |
+        #  docker run --rm \
+        #    -e ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
+        #    -e SCANNER_AI_ENRICH=true \
+        #    -e SCANNER_SARIF_FILE=/output/results.sarif \
+        #    -e SCANNER_OPENAPI_FILE=/output/openapi.json \
+        #    -e SCANNER_FAIL_ON_CRITICAL=false \
+        #    -v ${{ github.workspace }}:/code:ro \
+        #    -v ${{ github.workspace }}/scan-output:/output \
+        #    -v ~/.invicti-source-scan-cache:/.cache/enrichment \
+        #    invicti-source-scan:latest
+        run: |
+          docker run --rm \
+            -e SCANNER_SARIF_FILE=/output/results.sarif \
+            -e SCANNER_OPENAPI_FILE=/output/openapi.json \
+            -e SCANNER_FAIL_ON_CRITICAL=false \
+            -v ${{ github.workspace }}:/code:ro \
+            -v ${{ github.workspace }}/scan-output:/output \
+            -v ~/.invicti-source-scan-cache:/.cache/enrichment \
+            invicti-source-scan:latest
+
+      - name: Verify source scan outputs
+        run: |
+          echo "── scan-output/ ──────────────────────────────────────────────"
+          ls -lh ${{ github.workspace }}/scan-output/
+
+          # Fail fast if the OpenAPI spec wasn't produced — the DAST stage needs it
+          if [ ! -f "${{ github.workspace }}/scan-output/openapi.json" ]; then
+            echo "::error::openapi.json not found — source scanner did not produce a spec."
+            exit 1
+          fi
+
+          ENDPOINT_COUNT=$(jq '[.paths | to_entries | length] | add // 0' \
+            ${{ github.workspace }}/scan-output/openapi.json)
+          echo "::notice::Source scan discovered ${ENDPOINT_COUNT} API endpoint(s)."
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('scan-output/results.sarif') != ''
+        with:
+          sarif_file: scan-output/results.sarif
+          category: invicti-source-scan
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 2 – BUILD
+      # Compile WebGoat from the forked source using the Maven wrapper that
+      # ships with the repo.  The resulting JAR is what gets containerised
+      # in stage 3.
+      #
+      # If you prefer to skip building from source and just pull the pre-built
+      # Docker image, delete this stage and adjust stage 3 accordingly.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
+
+      - name: "Stage 2 – Build WebGoat (Maven)"
+        run: ./mvnw -B clean package -DskipTests --no-transfer-progress
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 3 – DEPLOY
+      # Start WebGoat as a background container bound to ALL interfaces
+      # (0.0.0.0) so the EphemeralAgent running on the host can reach it
+      # via the Docker bridge gateway at 172.17.0.1.
+      #
+      # WEBGOAT_HOST is set to 0.0.0.0 to override WebGoat's default of
+      # binding only to 127.0.0.1 inside the container.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: "Stage 3 – Deploy WebGoat (background container)"
+        run: |
+          # Build a local image from the source we just compiled
+          docker build -t webgoat-local:ci .
+
+          # Start in detached mode, binding to 0.0.0.0 so the host can reach it
+          docker run -d \
+            --name webgoat \
+            -p 0.0.0.0:${{ env.WEBGOAT_PORT }}:8080 \
+            -e WEBGOAT_HOST=0.0.0.0 \
+            -e TZ=UTC \
+            webgoat-local:ci
+
+          echo "WebGoat container started. Waiting for it to become healthy…"
+
+      - name: Wait for WebGoat to be ready
+        run: |
+          TIMEOUT=120  # seconds
+          ELAPSED=0
+          TARGET="http://172.17.0.1:${{ env.WEBGOAT_PORT }}/WebGoat"
+
+          until curl --silent --fail --max-time 5 "${TARGET}" > /dev/null 2>&1; do
+            if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
+              echo "::error::WebGoat did not become ready within ${TIMEOUT}s."
+              docker logs webgoat
+              exit 1
+            fi
+            echo "  …waiting (${ELAPSED}s elapsed)"
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+          done
+
+          echo "::notice::WebGoat is ready at ${TARGET}"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 4 – DAST SCAN
+      # scan-cli runs directly on the runner (not inside a container) so that
+      # the EphemeralAgent it launches inherits the runner's network and can
+      # reach WebGoat at 172.17.0.1.
+      #
+      # INVICTI_IMPORT_FILE_PATHS points at the OpenAPI spec from stage 1,
+      # giving the DAST scanner full coverage of every discovered endpoint.
+      #
+      # INVICTI_TARGET_URL creates an ephemeral scan target on the fly —
+      # no pre-configured target ID is needed when using EphemeralAgent,
+      # but we still pass INVICTI_TARGET_ID for reporting continuity.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Pull scan-cli image
+        run: docker pull invicti/scan-cli:latest
+
+      - name: "Stage 4 – DAST Scan (EphemeralAgent)"
+        run: |
+          docker run --rm \
+            --network host \
+            -v ${{ github.workspace }}/scan-output:/scan-output:ro \
+            -v ${{ github.workspace }}/dast-results:/results \
+            -e INVICTI_API_BASE_URL="${{ vars.INVICTI_API_BASE_URL }}" \
+            -e INVICTI_API_TOKEN="${{ secrets.INVICTI_API_TOKEN }}" \
+            -e INVICTI_TARGET_ID="${{ vars.INVICTI_TARGET_ID }}" \
+            -e INVICTI_TARGET_URL="${{ env.WEBGOAT_TARGET_URL }}/WebGoat" \
+            -e INVICTI_SCAN_AGENT="EphemeralAgent" \
+            -e INVICTI_SCAN_PROFILE="Full Scan" \
+            -e INVICTI_IMPORT_FILE_PATHS="/scan-output/openapi.json" \
+            -e INVICTI_MINIMUM_SEVERITY="Critical" \
+            -e INVICTI_MINIMUM_CONFIDENCE=80 \
+            -e INVICTI_SCAN_TIMEOUT=10 \
+            -e INVICTI_REPORT_TEMPLATE="Comprehensive" \
+            invicti/scan-cli:latest
+
+      # ────────────────────────────────────────────────────────────────────────
+      # CLEANUP & ARTIFACT UPLOAD
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Stop WebGoat container
+        if: always()
+        run: docker stop webgoat && docker rm webgoat || true
+
+      - name: Upload source scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invicti-source-scan-output
+          path: scan-output/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload DAST scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invicti-dast-results
+          path: |
+            dast-results/**
+            ./*.json
+            ./*.html
+          retention-days: 14
+          if-no-files-found: ignore
