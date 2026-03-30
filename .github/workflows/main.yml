@@ -95,6 +95,14 @@ jobs:
       - name: Prepare scan output directory
         run: mkdir -p ${{ github.workspace }}/scan-output
 
+      - name: Login to Invicti Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.invicti.com
+          # Replace with the actual username provided by Invicti (often your email)
+          username: brett.durlock@invicti.com 
+          password: ${{ secrets.INVICTI_LICENSE_KEY }}
+
       - name: "Stage 1 – Source Scan (API discovery)"
         #run: |
         #  docker run --rm \
