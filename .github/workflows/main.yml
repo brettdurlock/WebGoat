@@ -63,6 +63,7 @@ jobs:
   security-scan:
     name: "Source Scan → Build → Deploy → DAST"
     runs-on: ubuntu-latest
+    environment: "WebGoat Scan"
 
     # WebGoat target URL, referenced in multiple steps
     env:
