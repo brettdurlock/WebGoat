@@ -173,24 +173,25 @@ jobs:
 
           echo "WebGoat container started using official image."
 
-      - name: Wait for WebGoat to be ready
+      - name: Create WebGoat Scan User
         run: |
-          TIMEOUT=120  # seconds
-          ELAPSED=0
-          TARGET="http://172.17.0.1:${{ env.WEBGOAT_PORT }}/WebGoat"
+          TARGET_BASE="http://172.17.0.1:${{ env.WEBGOAT_PORT }}/WebGoat"
+          COOKIE_FILE="cookies.txt"
+          
+          echo "Waiting for WebGoat to initialize..."
+          timeout 120s bash -c "until curl -s -f ${TARGET_BASE}/login > /dev/null; do sleep 5; done"
 
-          until curl --silent --fail --max-time 5 "${TARGET}" > /dev/null 2>&1; do
-            if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
-              echo "::error::WebGoat did not become ready within ${TIMEOUT}s."
-              docker logs webgoat
-              exit 1
-            fi
-            echo "  …waiting (${ELAPSED}s elapsed)"
-            sleep 5
-            ELAPSED=$((ELAPSED + 5))
-          done
+          echo "Registering DAST user..."
+          # 1. Visit the registration page to get a session cookie
+          curl -s -c $COOKIE_FILE "${TARGET_BASE}/registration" > /dev/null
 
-          echo "::notice::WebGoat is ready at ${TARGET}"
+          # 2. Post the registration data using that session
+          curl -s -b $COOKIE_FILE -c $COOKIE_FILE \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-raw "username=kalikali&password=Kali1234&matchingPassword=Kali1234&agree=agree" \
+            "${TARGET_BASE}/register.mvc"
+
+          echo "::notice::User 'scantest' created successfully."
 
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 4 – DAST SCAN
