@@ -118,6 +118,7 @@ jobs:
         #    invicti-source-scan:latest
         run: |
           docker run --rm \
+            --user $(id -u):$(id -g) \
             -e INVICTI_URL="${{ vars.INVICTI_API_BASE_URL }}" \
             -e INVICTI_USER=brett.durlock@invicti.com \
             -e INVICTI_TOKEN="${{ secrets.INVICTI_API_TOKEN }}" \
