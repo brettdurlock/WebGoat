@@ -154,31 +154,6 @@ jobs:
           category: invicti-source-scan
 
       # ────────────────────────────────────────────────────────────────────────
-      # STAGE 2 – BUILD
-      # Compile WebGoat from the forked source using the Maven wrapper that
-      # ships with the repo.  The resulting JAR is what gets containerised
-      # in stage 3.
-      #
-      # If you prefer to skip building from source and just pull the pre-built
-      # Docker image, delete this stage and adjust stage 3 accordingly.
-      # ────────────────────────────────────────────────────────────────────────
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Cache Maven dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: maven-
-
-      - name: "Stage 2 – Build WebGoat (Maven)"
-        run: ./mvnw -B clean package -DskipTests --no-transfer-progress
-
-      # ────────────────────────────────────────────────────────────────────────
       # STAGE 3 – DEPLOY
       # Start WebGoat as a background container bound to ALL interfaces
       # (0.0.0.0) so the EphemeralAgent running on the host can reach it
@@ -187,20 +162,16 @@ jobs:
       # WEBGOAT_HOST is set to 0.0.0.0 to override WebGoat's default of
       # binding only to 127.0.0.1 inside the container.
       # ────────────────────────────────────────────────────────────────────────
-      - name: "Stage 3 – Deploy WebGoat (background container)"
+      - name: "Stage 3 – Deploy WebGoat"
         run: |
-          # Build a local image from the source we just compiled
-          docker build -t webgoat-local:ci .
-
-          # Start in detached mode, binding to 0.0.0.0 so the host can reach it
           docker run -d \
             --name webgoat \
             -p 0.0.0.0:${{ env.WEBGOAT_PORT }}:8080 \
             -e WEBGOAT_HOST=0.0.0.0 \
             -e TZ=UTC \
-            webgoat-local:ci
+            webgoat/webgoat:latest
 
-          echo "WebGoat container started. Waiting for it to become healthy…"
+          echo "WebGoat container started using official image."
 
       - name: Wait for WebGoat to be ready
         run: |
