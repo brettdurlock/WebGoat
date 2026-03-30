@@ -222,9 +222,7 @@ jobs:
             -e INVICTI_SCAN_AGENT="EphemeralAgent" \
             -e INVICTI_SCAN_PROFILE="Full Scan" \
             -e INVICTI_IMPORT_FILE_PATHS="/scan-output/openapi.json" \
-            -e INVICTI_MINIMUM_SEVERITY="Critical" \
-            -e INVICTI_MINIMUM_CONFIDENCE=80 \
-            -e INVICTI_SCAN_TIMEOUT=10 \
+            -e INVICTI_SCAN_TIMEOUT=60 \
             -e INVICTI_REPORT_TEMPLATE="Comprehensive" \
             invicti/scan-cli:latest
 
