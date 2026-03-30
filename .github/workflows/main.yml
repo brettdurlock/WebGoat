@@ -109,13 +109,17 @@ jobs:
         #    invicti-source-scan:latest
         run: |
           docker run --rm \
-            -e SCANNER_SARIF_FILE=/output/results.sarif \
-            -e SCANNER_OPENAPI_FILE=/output/openapi.json \
+            -e INVICTI_URL="${{ vars.INVICTI_API_BASE_URL }}" \
+            -e INVICTI_USER=brett.durlock@invicti.com \
+            -e INVICTI_TOKEN="${{ secrets.INVICTI_API_TOKEN }}" \
+            -e INVICTI_WEBSITE_ID=${{ vars.INVICTI_TARGET_ID }} \
+            -e SCANNER_DETECT_VULNS=true \
+            -e SCANNER_ENABLE_TAINT=true \
             -e SCANNER_FAIL_ON_CRITICAL=false \
             -v ${{ github.workspace }}:/code:ro \
             -v ${{ github.workspace }}/scan-output:/output \
             -v ~/.invicti-source-scan-cache:/.cache/enrichment \
-            invicti-source-scan:latest
+            artifact.invicti.com:443/docker/invicti-platform/invicti-source-scan
 
       - name: Verify source scan outputs
         run: |
