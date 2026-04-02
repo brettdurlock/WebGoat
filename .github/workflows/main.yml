@@ -107,15 +107,30 @@ jobs:
       - name: "Stage 1 – Source Scan (API discovery)"
         #run: |
         #  docker run --rm \
-        #    -e ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }} \
-        #    -e SCANNER_AI_ENRICH=true \
-        #    -e SCANNER_SARIF_FILE=/output/results.sarif \
-        #    -e SCANNER_OPENAPI_FILE=/output/openapi.json \
-        #    -e SCANNER_FAIL_ON_CRITICAL=false \
+        #    -e INVICTI_URL=https://platform.invicti.com `
+        #    -e INVICTI_USER={email} `
+        #    -e INVICTI_TOKEN={token} `
+        #    -e INVICTI_WEBSITE_ID={targetid} `
+        #    -e SCANNER_MAX_TOKENS=20000 `
+        #    -e LLM_PROVIDER=bedrock `
+        #    -e AWS_ACCESS_KEY_ID=$key `
+        #    -e AWS_SECRET_ACCESS_KEY=$secret `
+        #    -e AWS_SESSION_TOKEN=$token `
+        #    -e AWS_REGION=us-east-1 `
+        #    -e LLM_MODEL=arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0 `
+        #    -e LLM_MAX_TOKENS=8192 `
+        #    -e SCANNER_AI_ENRICH=true `
+        #    -e SCANNER_PARALLEL=true `
+        #    -e INVICTI_SYNC=true `
+        #    -e ENRICHMENT_MAX_WORKERS=8 `
+        #    -e ENRICHMENT_FALLBACK_ENABLED=true `
+        #    -e ENRICHMENT_AGENTS=openapi_enrichment,auth_flow_detector,payload_generator,dependency_graph,bola_detection `
+        #    -e SCANNER_NO_CACHE=true `
+        #    -e SCANNER_SERVICE_NAME=distributed-vulnerable-platform `
         #    -v ${{ github.workspace }}:/code:ro \
         #    -v ${{ github.workspace }}/scan-output:/output \
         #    -v ~/.invicti-source-scan-cache:/.cache/enrichment \
-        #    invicti-source-scan:latest
+        #    registry.invicti.com/invicti-platform/invicti-source-scan:latest
         run: |
           docker run --rm \
             --user $(id -u):$(id -g) \
@@ -221,7 +236,8 @@ jobs:
             -e INVICTI_SCAN_AGENT="EphemeralAgent" \
             -e INVICTI_SCAN_PROFILE="Full Scan" \
             -e INVICTI_IMPORT_FILE_PATHS="/scan-output/openapi.json" \
-            -e INVICTI_TRIGGER_SCAN_ONLY=true \
+            -e INVICTI_REPORT_TEMPLATE="Comprehensive" \
+            -e INVICTI_SCAN_TIMEOUT=40 \
             invicti/scan-cli:latest
 
       # ────────────────────────────────────────────────────────────────────────
