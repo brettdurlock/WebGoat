@@ -138,6 +138,7 @@ jobs:
             -e INVICTI_USER=brett.durlock@invicti.com \
             -e INVICTI_TOKEN="${{ secrets.INVICTI_API_TOKEN }}" \
             -e INVICTI_WEBSITE_ID=${{ vars.INVICTI_TARGET_ID }} \
+            -e INVICTI_SYNC=true \
             -e SCANNER_ENABLE_TAINT=true \
             -e SCANNER_FAIL_ON_CRITICAL=false \
             -v ${{ github.workspace }}:/code:ro \
@@ -237,8 +238,8 @@ jobs:
             -e INVICTI_SCAN_PROFILE="Full Scan" \
             -e INVICTI_IMPORT_FILE_PATHS="/scan-output/openapi.json" \
             -e INVICTI_REPORT_TEMPLATE="Comprehensive" \
-            -e INVICTI_SCAN_TIMEOUT=40 \
-            invicti/scan-cli:latest
+            -e INVICTI_SCAN_TIMEOUT=10 \
+            artifact.invicti.com/docker/invicti-security/products/scan-cli:feat-scan-timeout
 
       # ────────────────────────────────────────────────────────────────────────
       # CLEANUP & ARTIFACT UPLOAD
